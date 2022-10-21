@@ -44,11 +44,11 @@ def decrypt_dm(public_key: str, encrypted_content: str) -> str:
     shared_secret = compute_shared_secret(PRIVATE_KEY, public_key)
     return decrypt_message(encrypted_content, shared_secret)
 
-def decrypt_dm_init(decoy_public_key: str, encrypted_content: str):
+def decrypt_decoy_proof(decoy_public_key: str, encrypted_content: str):
     decoy_shared_secret = compute_shared_secret(PRIVATE_KEY, decoy_public_key)
     return decrypt_message(encrypted_content, decoy_shared_secret)
 
-def verify_dm_init_content(message: str, decoy_public_key: str, real_public_key: str, signature: str):
+def verify_decoy_proof_content(message: str, decoy_public_key: str, real_public_key: str, signature: str):
     msg_hash = sha256(message.encode()).hexdigest()
     if not verify_message(msg_hash, signature, real_public_key):
         return False
@@ -114,12 +114,12 @@ def handle_messages(message_pool: MessagePool):
                     decrypted_content = decrypt_dm(sender_real_public_key, event_message.event.content)
                     print(decrypted_content)
                 elif event_message.event.kind == 7476:
-                    decrypted_content = decrypt_dm_init(event_message.event.public_key, event_message.event.content)
+                    decrypted_content = decrypt_decoy_proof(event_message.event.public_key, event_message.event.content)
                     decrypted_content_json = json.loads(decrypted_content)
                     message = decrypted_content_json["msg"]
                     sender_real_public_key = decrypted_content_json["pk"]
                     signature = decrypted_content_json["sig"]
-                    if verify_dm_init_content(message, event_message.event.public_key, sender_real_public_key, signature):
+                    if verify_decoy_proof_content(message, event_message.event.public_key, sender_real_public_key, signature):
                         save_decoy_public_key(sender_real_public_key, event_message.event.public_key)
                         print(f"{sender_real_public_key} proved their decoy key is {event_message.event.public_key}")
         
