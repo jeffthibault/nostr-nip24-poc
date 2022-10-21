@@ -59,7 +59,7 @@ def verify_dm_init_content(message: str, decoy_public_key: str, real_public_key:
 
     return True
 
-def create_dm_init_event(recipient_public_key: str) -> Event:
+def create_decoy_proof_event(recipient_public_key: str) -> Event:
     real_shared_secret = compute_shared_secret(PRIVATE_KEY, recipient_public_key)
     scalar = sha256(real_shared_secret.encode()).digest()
     sender_decoy_private_key = tweak_add_private_key(PRIVATE_KEY, scalar)
@@ -141,7 +141,7 @@ def prove_decoy(args):
         print("No private key set. Generate and set a new private key")
         return
 
-    event = create_dm_init_event(args.public_key)
+    event = create_decoy_proof_event(args.public_key)
     message = [ClientMessageType.EVENT, event.to_json_object()]
 
     relay_manager = RelayManager()
