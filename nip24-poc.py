@@ -112,6 +112,7 @@ def handle_messages(message_pool: MessagePool):
                         print("Unknown author public key.")
                         return
                     decrypted_content = decrypt_dm(sender_real_public_key, event_message.event.content)
+                    print(f"Received a DM from {sender_real_public_key} at your Decoy Inbox Hash {event_message.event.tags[0][1]}")
                     print(decrypted_content)
                 elif event_message.event.kind == 7476:
                     decrypted_content = decrypt_decoy_proof(event_message.event.public_key, event_message.event.content)
@@ -159,7 +160,8 @@ def prove_decoy(args):
     messages_thread.start()
     time.sleep(0.5)
     relay_manager.close_connections()
-    print(f"Event Details -> https://nostr.com/e/{event.id}")
+    print(f"Sent a Decoy Key Proof event to {args.public_key}")
+    print(f"Event details at https://nostr.com/e/{event.id}")
 
 def send_dm(args):
     if PRIVATE_KEY is None:
@@ -184,7 +186,8 @@ def send_dm(args):
     messages_thread.start()
     time.sleep(0.5)
     relay_manager.close_connections()
-    print(f"Event Details -> https://nostr.com/e/{event.id}")
+    print(f"Send a DM to {args.public_key} at their Decoy Inbox Hash {event.tags[0][1]}")
+    print(f"Event details at https://nostr.com/e/{event.id}")
 
 def get_decoy_proof(args):
     if PRIVATE_KEY is None:
