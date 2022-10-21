@@ -1,0 +1,3 @@
+[submodule "python_nostr"]
+	path = python_nostr
+	url = https://github.com/jeffthibault/python-nostr
