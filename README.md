@@ -1,6 +1,8 @@
 # nostr-nip24-poc
 
 ## Walkthrough
+Note: I wrote this in Python 3.9.5
+
 **Step 1**: Open a terminal and clone this repository
 ```bash
 git clone https://github.com/jeffthibault/nostr-nip24-poc.git
