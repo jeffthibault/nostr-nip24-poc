@@ -75,7 +75,7 @@ def create_decoy_proof_event(recipient_public_key: str) -> Event:
     decoy_shared_secret = compute_shared_secret(sender_decoy_private_key, recipient_public_key)
     encrypted_content = encrypt_message(json.dumps(content_json), decoy_shared_secret)
 
-    event = Event(sender_decoy_public_key, encrypted_content, kind=7476, tags=[['p', recipient_public_key]])
+    event = Event(sender_decoy_public_key, encrypted_content, kind=12, tags=[['p', recipient_public_key]])
     event.sign(sender_decoy_private_key)
 
     return event
@@ -114,7 +114,7 @@ def handle_messages(message_pool: MessagePool):
                     decrypted_content = decrypt_dm(sender_real_public_key, event_message.event.content)
                     print(f"Received a DM from {sender_real_public_key} via your Decoy Inbox Hash {event_message.event.tags[0][1]}")
                     print(decrypted_content)
-                elif event_message.event.kind == 7476:
+                elif event_message.event.kind == 12:
                     decrypted_content = decrypt_decoy_proof(event_message.event.public_key, event_message.event.content)
                     decrypted_content_json = json.loads(decrypted_content)
                     message = decrypted_content_json["msg"]
@@ -158,7 +158,7 @@ def prove_decoy(args):
         daemon=True
     )
     messages_thread.start()
-    time.sleep(0.5)
+    time.sleep(0.75)
     relay_manager.close_connections()
     print(f"Sent a Decoy Key Proof event to {args.public_key}")
     print(f"Event details at https://nostr.com/e/{event.id}")
@@ -184,7 +184,7 @@ def send_dm(args):
         daemon=True
     )
     messages_thread.start()
-    time.sleep(0.5)
+    time.sleep(0.75)
     relay_manager.close_connections()
     print(f"Sent a DM to {args.public_key} via their Decoy Inbox Hash {event.tags[0][1]}")
     print(f"Event details at https://nostr.com/e/{event.id}")
@@ -195,7 +195,7 @@ def get_decoy_proof(args):
         return
 
     recipient_public_key = get_public_key(PRIVATE_KEY)
-    filters = Filters([Filter(kinds=[7476], tags={"#p": [recipient_public_key]})])
+    filters = Filters([Filter(kinds=[12], tags={"#p": [recipient_public_key]})])
     
     subscription_id = os.urandom(4).hex()
     message = [ClientMessageType.REQUEST, subscription_id]
