@@ -5,19 +5,21 @@ import time
 import os
 import threading
 from hashlib import sha256
+from python_nostr.nostr import bech32
 from python_nostr.nostr.event import Event, EventKind
 from python_nostr.nostr.filter import Filters, Filter
 from python_nostr.nostr.message_pool import MessagePool
 from python_nostr.nostr.message_type import ClientMessageType
 from python_nostr.nostr.relay_manager import RelayManager
-from python_nostr.nostr.key import (
-    decrypt_message, compute_shared_secret, encrypt_message, 
-    get_key_pair, get_public_key, sign_message, tweak_add_private_key, 
-    verify_message)
+from python_nostr.nostr.key import PrivateKey, PublicKey
 
-PRIVATE_KEY = None
+PRIVATE_KEY: str = None
 
 # Helper functions
+def bech32_decode(key: str) -> bytes:
+    data = bech32.bech32_decode(key)[1]
+    return bytes(bech32.convertbits(data, 5, 8, False))
+
 def get_real_public_key_from_decoy(decoy_public_key: str) -> str:
     with open(f"{PRIVATE_KEY}-address-book.json", 'r') as infile:
         saved_decoy_public_keys = dict(json.load(infile))
@@ -41,59 +43,56 @@ def save_decoy_public_key(real_public_key: str, decoy_public_key: str):
         json.dump(saved_decoy_public_keys, outfile, indent=4)
 
 def decrypt_dm(public_key: str, encrypted_content: str) -> str:
-    shared_secret = compute_shared_secret(PRIVATE_KEY, public_key)
-    return decrypt_message(encrypted_content, shared_secret)
+    private_key = PrivateKey(bech32_decode(PRIVATE_KEY))
+    return private_key.decrypt_message(encrypted_content, public_key)
 
 def decrypt_decoy_proof(decoy_public_key: str, encrypted_content: str):
-    decoy_shared_secret = compute_shared_secret(PRIVATE_KEY, decoy_public_key)
-    return decrypt_message(encrypted_content, decoy_shared_secret)
+    private_key = PrivateKey(bech32_decode(PRIVATE_KEY))
+    return private_key.decrypt_message(encrypted_content, decoy_public_key)
 
-def verify_decoy_proof_content(message: str, decoy_public_key: str, real_public_key: str, signature: str):
+def verify_decoy_proof_content(message: str, public_key: str, signature: str):
+    pk = PublicKey(bytes.fromhex(public_key))
     msg_hash = sha256(message.encode()).hexdigest()
-    if not verify_message(msg_hash, signature, real_public_key):
-        return False
-    
-    decoy_pk = message[3:]
-    if not decoy_pk == decoy_public_key:
+    if not pk.verify_signed_message_hash(msg_hash, signature):
         return False
 
     return True
 
 def create_decoy_proof_event(recipient_public_key: str) -> Event:
-    real_shared_secret = compute_shared_secret(PRIVATE_KEY, recipient_public_key)
-    scalar = sha256(real_shared_secret.encode()).digest()
-    sender_decoy_private_key = tweak_add_private_key(PRIVATE_KEY, scalar)
-    sender_decoy_public_key = get_public_key(sender_decoy_private_key)
+    private_key = PrivateKey(bech32_decode(PRIVATE_KEY))
+    real_shared_secret = private_key.compute_shared_secret(recipient_public_key)
+    scalar = sha256(real_shared_secret).digest()
+    sender_decoy_private_key = PrivateKey(private_key.tweak_add(scalar))
 
-    msg = f"dk:{sender_decoy_public_key}"
+    msg = f"dk:{sender_decoy_private_key.public_key.hex()}"
     content_json = {
         "msg": msg,
-        "pk": get_public_key(PRIVATE_KEY),
-        "sig": sign_message(sha256(msg.encode()).hexdigest(), PRIVATE_KEY)
+        "pk": private_key.public_key.hex(),
+        "sig": private_key.sign_message_hash(sha256(msg.encode()).digest())
     }
 
-    decoy_shared_secret = compute_shared_secret(sender_decoy_private_key, recipient_public_key)
-    encrypted_content = encrypt_message(json.dumps(content_json), decoy_shared_secret)
-
-    event = Event(sender_decoy_public_key, encrypted_content, kind=12, tags=[['p', recipient_public_key]])
-    event.sign(sender_decoy_private_key)
+    throwaway_key = PrivateKey()
+    encrypted_content = throwaway_key.encrypt_message(json.dumps(content_json), recipient_public_key)
+    event = Event(throwaway_key.public_key.hex(), encrypted_content, kind=12, tags=[['p', recipient_public_key]])
+    event.sign(throwaway_key.hex())
 
     return event
 
-def get_decoy_inbox_hash(shared_secret: str, public_key: str) -> str:
-    return sha256(f"{sha256(shared_secret.encode()).hexdigest()}{public_key}".encode()).hexdigest()
+def get_decoy_inbox_hash(shared_secret: bytes, public_key: str) -> str:
+    sum = PrivateKey(shared_secret).tweak_add(bytes.fromhex(public_key))
+    return sha256(sum).hexdigest()
 
 def create_dm_event(recipient_public_key: str, content: str) -> Event:
-    shared_secret = compute_shared_secret(PRIVATE_KEY, recipient_public_key)
-    scalar = sha256(shared_secret.encode()).digest()
-    sender_decoy_private_key = tweak_add_private_key(PRIVATE_KEY, scalar)
-    sender_decoy_public_key = get_public_key(sender_decoy_private_key)
+    private_key = PrivateKey(bech32_decode(PRIVATE_KEY))
+    real_shared_secret = private_key.compute_shared_secret(recipient_public_key)
+    scalar = sha256(real_shared_secret).digest()
+    sender_decoy_private_key = PrivateKey(private_key.tweak_add(scalar))
 
-    encrypted_content = encrypt_message(content, shared_secret)
-    recipient_decoy_inbox_hash = get_decoy_inbox_hash(shared_secret, recipient_public_key)
+    encrypted_content = private_key.encrypt_message(content, recipient_public_key)
+    recipient_decoy_inbox_hash = get_decoy_inbox_hash(real_shared_secret, recipient_public_key)
 
-    event = Event(sender_decoy_public_key, encrypted_content, kind=EventKind.ENCRYPTED_DIRECT_MESSAGE, tags=[['p', recipient_decoy_inbox_hash]])
-    event.sign(sender_decoy_private_key)
+    event = Event(sender_decoy_private_key.public_key.hex(), encrypted_content, kind=EventKind.ENCRYPTED_DIRECT_MESSAGE, tags=[['p', recipient_decoy_inbox_hash]])
+    event.sign(sender_decoy_private_key.hex())
 
     return event
 
@@ -112,7 +111,7 @@ def handle_messages(message_pool: MessagePool):
                         print("Unknown sender public key.")
                         return
                     decrypted_content = decrypt_dm(sender_real_public_key, event_message.event.content)
-                    print(f"Received a DM from {sender_real_public_key} via your Decoy Inbox Hash {event_message.event.tags[0][1]}")
+                    print(f"Received a DM from {PublicKey(bytes.fromhex(sender_real_public_key)).bech32()} via your Decoy Inbox Hash {event_message.event.tags[0][1]}")
                     print(decrypted_content)
                 elif event_message.event.kind == 12:
                     decrypted_content = decrypt_decoy_proof(event_message.event.public_key, event_message.event.content)
@@ -120,29 +119,30 @@ def handle_messages(message_pool: MessagePool):
                     message = decrypted_content_json["msg"]
                     sender_real_public_key = decrypted_content_json["pk"]
                     signature = decrypted_content_json["sig"]
-                    if verify_decoy_proof_content(message, event_message.event.public_key, sender_real_public_key, signature):
-                        save_decoy_public_key(sender_real_public_key, event_message.event.public_key)
-                        print(f"{sender_real_public_key} proved their decoy key is {event_message.event.public_key}")
+                    if verify_decoy_proof_content(message, sender_real_public_key, signature):
+                        sender_decoy_public_key = message[3:]
+                        save_decoy_public_key(sender_real_public_key, sender_decoy_public_key)
+                        print(f"{PublicKey(bytes.fromhex(sender_real_public_key)).bech32()} proved their decoy key is {PublicKey(bytes.fromhex(sender_decoy_public_key)).bech32()}")
         
         if message_pool.has_eose_notices():
             break
 
 # CLI actions
 def generate_key(args):
-    private_key, public_key = get_key_pair()
-    print(f"private key: {private_key}")
-    print(f"public key: {public_key}")
+    private_key = PrivateKey()
+    print(f"private key: {private_key.bech32()}")
+    print(f"public key: {private_key.public_key.bech32()}")
 
 def set_key(args):
-    with open("current-private-key.txt", 'w') as infile:
-        infile.write(args.private_key)
+    with open("current-private-key.txt", 'w') as outfile:
+        outfile.write(args.private_key)
 
 def prove_decoy(args):
     if PRIVATE_KEY is None:
         print("No private key set. Generate and set a new private key")
         return
 
-    event = create_decoy_proof_event(args.public_key)
+    event = create_decoy_proof_event(bech32_decode(args.public_key).hex())
     message = [ClientMessageType.EVENT, event.to_json_object()]
 
     relay_manager = RelayManager()
@@ -168,7 +168,7 @@ def send_dm(args):
         print("No private key set. Generate and set a new private key")
         return
 
-    event = create_dm_event(args.public_key, args.content)
+    event = create_dm_event(bech32_decode(args.public_key).hex(), args.content)
     message = [ClientMessageType.EVENT, event.to_json_object()]
 
     relay_manager = RelayManager()
@@ -194,8 +194,8 @@ def get_decoy_proof(args):
         print("No private key set. Generate and set a new private key")
         return
 
-    recipient_public_key = get_public_key(PRIVATE_KEY)
-    filters = Filters([Filter(kinds=[12], tags={"#p": [recipient_public_key]})])
+    private_key = PrivateKey(bech32_decode(PRIVATE_KEY))
+    filters = Filters([Filter(kinds=[12], tags={"#p": [private_key.public_key.hex()]})])
     
     subscription_id = os.urandom(4).hex()
     message = [ClientMessageType.REQUEST, subscription_id]
@@ -207,6 +207,7 @@ def get_decoy_proof(args):
     relay_manager.open_connections({"cert_reqs": ssl.CERT_NONE})
     time.sleep(1.25)
     relay_manager.publish_message(json.dumps(message))
+    time.sleep(0.5)
 
     messages_thread = threading.Thread(
         target=handle_messages,
@@ -222,15 +223,16 @@ def get_dm(args):
         print("No private key set. Generate and set a new private key")
         return
 
-    recipient_public_key = get_public_key(PRIVATE_KEY)
-    shared_secret = compute_shared_secret(PRIVATE_KEY, args.public_key)
-    recipient_decoy_inbox_hash = get_decoy_inbox_hash(shared_secret, recipient_public_key)
+    private_key = PrivateKey(bech32_decode(PRIVATE_KEY))
+    sender_public_key = PublicKey(bech32_decode(args.public_key))
+    shared_secret = private_key.compute_shared_secret(sender_public_key.hex())
+    decoy_inbox_hash = get_decoy_inbox_hash(shared_secret, private_key.public_key.hex())
 
     with open(f"{PRIVATE_KEY}-address-book.json", 'r') as infile:
         saved_decoy_public_keys = json.load(infile)
     
-    sender_decoy_public_key = saved_decoy_public_keys[args.public_key]
-    filters = Filters([Filter(kinds=[EventKind.ENCRYPTED_DIRECT_MESSAGE], authors=[sender_decoy_public_key], tags={"#p": [recipient_decoy_inbox_hash]})])
+    sender_decoy_public_key = saved_decoy_public_keys[sender_public_key.hex()]
+    filters = Filters([Filter(kinds=[EventKind.ENCRYPTED_DIRECT_MESSAGE], authors=[sender_decoy_public_key], tags={"#p": [decoy_inbox_hash]})])
     
     subscription_id = os.urandom(4).hex()
     message = [ClientMessageType.REQUEST, subscription_id]
@@ -242,6 +244,7 @@ def get_dm(args):
     relay_manager.open_connections({"cert_reqs": ssl.CERT_NONE})
     time.sleep(1.25)
     relay_manager.publish_message(json.dumps(message))
+    time.sleep(0.5)
 
     messages_thread = threading.Thread(
         target=handle_messages,
